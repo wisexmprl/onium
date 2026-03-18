@@ -1,0 +1,944 @@
+-- WISE Replay v14 FINAL - Playback v8 + Save/Load v11 + Fixed Rotation
+-- Paste to StarterPlayer > StarterPlayerScripts (LocalScript)
+
+-- ========== CONFIG ==========
+local KEY_NAME = "1"
+local KEY_EXPIRE = os.time({
+    year = 2027,
+    month = 12,
+    day = 13,
+    hour = 20,
+    min = 14,
+    sec = 59
+})
+
+local SAMPLE_INTERVAL = 0.04
+local MAX_RECORD_SECONDS = math.huge
+local MAX_SPEED = 10
+local DEFAULT_WALKSPEED = 16
+local LERP_STEP = 1/60
+
+local GET_KEY_LINK = "https://sfl.gl/esaRe"
+local YT_LINK = "https://youtube.com/@mainzstore1?si=Ve745DXZG6PRf8DX"
+local DC_LINK = "https://discord.gg/xxxx"
+local TLE_LINK = "https://t.me/xxxxx"
+
+-- ========== SERVICES ==========
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local HttpService = game:GetService("HttpService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- ========== HELPERS ==========
+local function clamp(v,a,b)
+    return math.max(a, math.min(b, v))
+end
+
+local function timeFmt(s)
+    s = math.floor(s or 0)
+    return string.format("%02d:%02d", math.floor(s/60), s%60)
+end
+
+local function safeClipboard(txt)
+    local success = false
+    if pcall(function() setclipboard(txt) end) then
+        success = true
+    elseif pcall(function() clipboard.set(txt) end) then
+        success = true
+    elseif pcall(function() writeclipboard(txt) end) then
+        success = true
+    end
+    return success
+end
+
+local function readFromClipboard()
+    local data = nil
+    if pcall(function() data = readclipboard() end) then
+        return data
+    elseif pcall(function() data = clipboard.get() end) then
+        return data
+    elseif pcall(function() data = getclipboard() end) then
+        return data
+    end
+    return nil
+end
+
+local function isKeyExpired()
+    return os.time() > KEY_EXPIRE
+end
+
+local function verifyKey(entered)
+    if entered ~= KEY_NAME then return false, "Key salah" end
+    if isKeyExpired() then return false, "Key expired" end
+    return true, "OK"
+end
+
+-- ========== UI ==========
+local screen = Instance.new("ScreenGui")
+screen.Name = "WiseReplay_UI"
+screen.ResetOnSpawn = false
+screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screen.Parent = playerGui
+
+-- Toast
+local toast = Instance.new("TextLabel", screen)
+toast.Size = UDim2.new(0,260,0,38)
+toast.Position = UDim2.new(0.5,-130,0.86,0)
+toast.BackgroundColor3 = Color3.fromRGB(30,150,60)
+toast.TextColor3 = Color3.fromRGB(255,255,255)
+toast.Font = Enum.Font.GothamBold
+toast.TextSize = 14
+toast.Text = ""
+toast.Visible = false
+Instance.new("UICorner", toast).CornerRadius = UDim.new(0,8)
+
+local function showToast(t, dur)
+    dur = dur or 1.2
+    toast.Text = t
+    toast.Visible = true
+    task.delay(dur, function()
+        pcall(function() toast.Visible = false end)
+    end)
+end
+
+-- Main UI
+local main = Instance.new("Frame", screen)
+main.Size = UDim2.new(0,720,0,500)
+main.Position = UDim2.new(0.22,0,0.12,0)
+main.BackgroundColor3 = Color3.fromRGB(43,33,57)
+main.BorderSizePixel = 0
+main.Visible = false
+Instance.new("UICorner", main).CornerRadius = UDim.new(0,14)
+
+local topBar = Instance.new("Frame", main)
+topBar.Size = UDim2.new(1,0,0,44)
+topBar.BackgroundColor3 = Color3.fromRGB(128,64,208)
+Instance.new("UICorner", topBar).CornerRadius = UDim.new(0,10)
+
+local titleLabel = Instance.new("TextLabel", topBar)
+titleLabel.Size = UDim2.new(0.6,0,1,0)
+titleLabel.Position = UDim2.new(0,12,0,0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "ONIUM | [FULL]"
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextColor3 = Color3.fromRGB(255,255,255)
+titleLabel.TextSize = 18
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local btnMin = Instance.new("TextButton", topBar)
+btnMin.Size = UDim2.new(0,36,0,28)
+btnMin.Position = UDim2.new(1,-88,0,8)
+btnMin.Text = "-"
+btnMin.Font = Enum.Font.GothamBold
+btnMin.TextSize = 22
+btnMin.BackgroundColor3 = Color3.fromRGB(68,40,120)
+btnMin.TextColor3 = Color3.fromRGB(255,255,255)
+Instance.new("UICorner", btnMin).CornerRadius = UDim.new(0,6)
+
+local btnClose = Instance.new("TextButton", topBar)
+btnClose.Size = UDim2.new(0,36,0,28)
+btnClose.Position = UDim2.new(1,-44,0,8)
+btnClose.Text = "X"
+btnClose.Font = Enum.Font.GothamBold
+btnClose.TextSize = 18
+btnClose.BackgroundColor3 = Color3.fromRGB(120,40,80)
+btnClose.TextColor3 = Color3.fromRGB(255,255,255)
+Instance.new("UICorner", btnClose).CornerRadius = UDim.new(0,6)
+
+local content = Instance.new("Frame", main)
+content.Size = UDim2.new(1,-24,1,-64)
+content.Position = UDim2.new(0,12,0,52)
+content.BackgroundTransparency = 1
+
+-- Row 1: Main Control Buttons
+local recBtn = Instance.new("TextButton", content)
+recBtn.Size = UDim2.new(0,130,0,40)
+recBtn.Position = UDim2.new(0,6,0,6)
+recBtn.Text = "Record [R]"
+recBtn.BackgroundColor3 = Color3.fromRGB(140,30,220)
+recBtn.Font = Enum.Font.GothamBold
+recBtn.TextSize = 16
+recBtn.TextColor3 = Color3.fromRGB(255,255,255)
+Instance.new("UICorner", recBtn).CornerRadius = UDim.new(0,8)
+
+local stopBtn = Instance.new("TextButton", content)
+stopBtn.Size = UDim2.new(0,130,0,40)
+stopBtn.Position = UDim2.new(0,146,0,6)
+stopBtn.Text = "Stop [T]"
+stopBtn.BackgroundColor3 = Color3.fromRGB(255,140,40)
+stopBtn.Font = Enum.Font.GothamBold
+stopBtn.TextSize = 16
+stopBtn.TextColor3 = Color3.fromRGB(255,255,255)
+Instance.new("UICorner", stopBtn).CornerRadius = UDim.new(0,8)
+
+local playBtn = Instance.new("TextButton", content)
+playBtn.Size = UDim2.new(0,130,0,40)
+playBtn.Position = UDim2.new(0,286,0,6)
+playBtn.Text = "Play [P]"
+playBtn.BackgroundColor3 = Color3.fromRGB(60,180,140)
+playBtn.Font = Enum.Font.GothamBold
+playBtn.TextSize = 16
+playBtn.TextColor3 = Color3.fromRGB(255,255,255)
+Instance.new("UICorner", playBtn).CornerRadius = UDim.new(0,8)
+
+-- Row 1: Save/Load Buttons
+local saveBtn = Instance.new("TextButton", content)
+saveBtn.Size = UDim2.new(0,130,0,40)
+saveBtn.Position = UDim2.new(0,426,0,6)
+saveBtn.Text = "Save"
+saveBtn.BackgroundColor3 = Color3.fromRGB(40,120,200)
+saveBtn.Font = Enum.Font.GothamBold
+saveBtn.TextSize = 16
+saveBtn.TextColor3 = Color3.fromRGB(255,255,255)
+Instance.new("UICorner", saveBtn).CornerRadius = UDim.new(0,8)
+
+local loadBtn = Instance.new("TextButton", content)
+loadBtn.Size = UDim2.new(0,130,0,40)
+loadBtn.Position = UDim2.new(0,566,0,6)
+loadBtn.Text = "Load"
+loadBtn.BackgroundColor3 = Color3.fromRGB(200,120,40)
+loadBtn.Font = Enum.Font.GothamBold
+loadBtn.TextSize = 16
+loadBtn.TextColor3 = Color3.fromRGB(255,255,255)
+Instance.new("UICorner", loadBtn).CornerRadius = UDim.new(0,8)
+
+-- Timer Display
+local timerLabel = Instance.new("TextLabel", content)
+timerLabel.Size = UDim2.new(0,220,0,40)
+timerLabel.Position = UDim2.new(0,6,0,56)
+timerLabel.BackgroundColor3 = Color3.fromRGB(36,140,150)
+timerLabel.Font = Enum.Font.GothamBold
+timerLabel.TextColor3 = Color3.fromRGB(255,255,255)
+timerLabel.TextSize = 18
+timerLabel.Text = "00:00"
+Instance.new("UICorner", timerLabel).CornerRadius = UDim.new(0,10)
+
+-- Speed Control
+local speedLabel = Instance.new("TextLabel", content)
+speedLabel.Size = UDim2.new(0,80,0,24)
+speedLabel.Position = UDim2.new(0,236,0,60)
+speedLabel.BackgroundTransparency = 1
+speedLabel.Text = "Speed:"
+speedLabel.Font = Enum.Font.Gotham
+speedLabel.TextColor3 = Color3.fromRGB(230,220,255)
+speedLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local speedBox = Instance.new("TextBox", content)
+speedBox.Size = UDim2.new(0,120,0,28)
+speedBox.Position = UDim2.new(0,290,0,56)
+speedBox.BackgroundColor3 = Color3.fromRGB(36,24,46)
+speedBox.TextColor3 = Color3.fromRGB(230,230,255)
+speedBox.Font = Enum.Font.Gotham
+speedBox.TextSize = 16
+speedBox.Text = "1.0"
+Instance.new("UICorner", speedBox).CornerRadius = UDim.new(0,8)
+
+-- Mode Control
+local modeLabel = Instance.new("TextLabel", content)
+modeLabel.Size = UDim2.new(0,80,0,24)
+modeLabel.Position = UDim2.new(0,420,0,60)
+modeLabel.BackgroundTransparency = 1
+modeLabel.Text = "Mode:"
+modeLabel.Font = Enum.Font.Gotham
+modeLabel.TextColor3 = Color3.fromRGB(230,220,255)
+modeLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local modeOnce = Instance.new("TextButton", content)
+modeOnce.Size = UDim2.new(0,80,0,28)
+modeOnce.Position = UDim2.new(0,470,0,56)
+modeOnce.Text = "1x"
+modeOnce.Font = Enum.Font.GothamBold
+modeOnce.TextColor3 = Color3.fromRGB(255,255,255)
+modeOnce.BackgroundColor3 = Color3.fromRGB(140,120,60)
+Instance.new("UICorner", modeOnce).CornerRadius = UDim.new(0,8)
+
+local modeLoop = Instance.new("TextButton", content)
+modeLoop.Size = UDim2.new(0,80,0,28)
+modeLoop.Position = UDim2.new(0,560,0,56)
+modeLoop.Text = "Loop"
+modeLoop.Font = Enum.Font.GothamBold
+modeLoop.TextColor3 = Color3.fromRGB(255,255,255)
+modeLoop.BackgroundColor3 = Color3.fromRGB(80,80,80)
+Instance.new("UICorner", modeLoop).CornerRadius = UDim.new(0,8)
+
+local isLoopMode = false
+local function updateModeUI()
+    if isLoopMode then
+        modeLoop.BackgroundColor3 = Color3.fromRGB(60,140,100)
+        modeOnce.BackgroundColor3 = Color3.fromRGB(80,80,80)
+    else
+        modeOnce.BackgroundColor3 = Color3.fromRGB(140,120,60)
+        modeLoop.BackgroundColor3 = Color3.fromRGB(80,80,80)
+    end
+end
+updateModeUI()
+
+modeOnce.MouseButton1Click:Connect(function()
+    isLoopMode = false
+    updateModeUI()
+end)
+
+modeLoop.MouseButton1Click:Connect(function()
+    isLoopMode = true
+    updateModeUI()
+end)
+
+-- Link Buttons
+local linkYT = Instance.new("TextButton", content)
+linkYT.Size = UDim2.new(0,220,0,30)
+linkYT.Position = UDim2.new(0,6,0,110)
+linkYT.Text = "📺 YouTube - Copy Link"
+linkYT.Font = Enum.Font.Gotham
+linkYT.TextColor3 = Color3.fromRGB(255,255,255)
+linkYT.BackgroundColor3 = Color3.fromRGB(90,30,140)
+Instance.new("UICorner", linkYT).CornerRadius = UDim.new(0,8)
+
+local linkDC = linkYT:Clone()
+linkDC.Parent = content
+linkDC.Position = UDim2.new(0,236,0,110)
+linkDC.Text = "💬 Discord - Copy Link"
+linkDC.BackgroundColor3 = Color3.fromRGB(70,100,200)
+
+local linkTLE = linkYT:Clone()
+linkTLE.Parent = content
+linkTLE.Position = UDim2.new(0,466,0,110)
+linkTLE.Text = "📱 Telegram - Copy Link"
+linkTLE.BackgroundColor3 = Color3.fromRGB(40,150,200)
+
+linkYT.MouseButton1Click:Connect(function() 
+    if safeClipboard(YT_LINK) then 
+        showToast("YouTube link copied!") 
+    else 
+        showToast("Manual copy: " .. YT_LINK)
+    end 
+end)
+
+linkDC.MouseButton1Click:Connect(function() 
+    if safeClipboard(DC_LINK) then 
+        showToast("Discord link copied!") 
+    else 
+        showToast("Manual copy: " .. DC_LINK)
+    end 
+end)
+
+linkTLE.MouseButton1Click:Connect(function() 
+    if safeClipboard(TLE_LINK) then 
+        showToast("Telegram link copied!") 
+    else 
+        showToast("Manual copy: " .. TLE_LINK)
+    end 
+end)
+
+-- Minimize Button
+local miniBtn = Instance.new("TextButton", screen)
+miniBtn.Size = UDim2.new(0,140,0,44)
+miniBtn.Position = UDim2.new(0.02,0,0.02,0)
+miniBtn.Text = "⚡ WISE REPLAY"
+miniBtn.BackgroundColor3 = Color3.fromRGB(120,64,200)
+miniBtn.Font = Enum.Font.GothamBold
+miniBtn.TextColor3 = Color3.fromRGB(255,255,255)
+miniBtn.Visible = false
+Instance.new("UICorner", miniBtn).CornerRadius = UDim.new(0,8)
+
+btnMin.MouseButton1Click:Connect(function()
+    main.Visible = false
+    miniBtn.Visible = true
+end)
+
+miniBtn.MouseButton1Click:Connect(function()
+    main.Visible = true
+    miniBtn.Visible = false
+end)
+
+btnClose.MouseButton1Click:Connect(function()
+    pcall(function() screen:Destroy() end)
+end)
+
+-- ========== KEY MODAL ==========
+local keyModal = Instance.new("Frame", screen)
+keyModal.Size = UDim2.new(0,360,0,200)
+keyModal.Position = UDim2.new(0.5,-180,0.5,-100)
+keyModal.BackgroundColor3 = Color3.fromRGB(36,24,46)
+Instance.new("UICorner", keyModal).CornerRadius = UDim.new(0,12)
+
+local kmTitle = Instance.new("TextLabel", keyModal)
+kmTitle.Size = UDim2.new(1,0,0,36)
+kmTitle.Position = UDim2.new(0,0,0,6)
+kmTitle.BackgroundTransparency = 1
+kmTitle.Text = "🔑 PASTE KEY"
+kmTitle.Font = Enum.Font.GothamBold
+kmTitle.TextSize = 18
+kmTitle.TextColor3 = Color3.fromRGB(240,240,240)
+
+local kmBox = Instance.new("TextBox", keyModal)
+kmBox.Size = UDim2.new(0.9,0,0,38)
+kmBox.Position = UDim2.new(0.05,0,0,56)
+kmBox.PlaceholderText = "PASTE KEY HERE..."
+kmBox.BackgroundColor3 = Color3.fromRGB(30,20,40)
+kmBox.ClearTextOnFocus = false
+kmBox.Text = ""
+kmBox.TextColor3 = Color3.fromRGB(240,240,240)
+kmBox.Font = Enum.Font.Gotham
+kmBox.TextSize = 14
+Instance.new("UICorner", kmBox).CornerRadius = UDim.new(0,8)
+
+local kmMsg = Instance.new("TextLabel", keyModal)
+kmMsg.Size = UDim2.new(1,-20,0,24)
+kmMsg.Position = UDim2.new(0,10,0,102)
+kmMsg.BackgroundTransparency = 1
+kmMsg.Font = Enum.Font.Gotham
+kmMsg.TextSize = 14
+kmMsg.TextColor3 = Color3.fromRGB(220,120,120)
+kmMsg.Text = ""
+
+local kmGetBtn = Instance.new("TextButton", keyModal)
+kmGetBtn.Size = UDim2.new(0.44,0,0,36)
+kmGetBtn.Position = UDim2.new(0.05,0,0,140)
+kmGetBtn.BackgroundColor3 = Color3.fromRGB(90,40,160)
+kmGetBtn.Text = "Get Key"
+kmGetBtn.Font = Enum.Font.GothamBold
+kmGetBtn.TextColor3 = Color3.fromRGB(255,255,255)
+Instance.new("UICorner", kmGetBtn).CornerRadius = UDim.new(0,8)
+
+local kmVerBtn = Instance.new("TextButton", keyModal)
+kmVerBtn.Size = UDim2.new(0.44,0,0,36)
+kmVerBtn.Position = UDim2.new(0.51,0,0,140)
+kmVerBtn.BackgroundColor3 = Color3.fromRGB(120,60,200)
+kmVerBtn.Text = "Verify"
+kmVerBtn.Font = Enum.Font.GothamBold
+kmVerBtn.TextColor3 = Color3.fromRGB(255,255,255)
+Instance.new("UICorner", kmVerBtn).CornerRadius = UDim.new(0,8)
+
+kmGetBtn.MouseButton1Click:Connect(function()
+    safeClipboard(GET_KEY_LINK)
+    showToast("Link copied!")
+end)
+
+kmVerBtn.MouseButton1Click:Connect(function()
+    local input = kmBox.Text or ""
+    local ok, msg = verifyKey(input)
+    if ok then
+        keyModal.Visible = false
+        main.Visible = true
+        showToast("✅ Key verified!")
+    else
+        kmMsg.Text = "❌ " .. msg
+        kmBox.Text = ""
+        showToast(msg)
+    end
+end)
+
+showToast("Enter key to unlock")
+
+-- ========== DRAG UI ==========
+do
+    local dragging = false
+    local dragStart
+    local startPos
+
+    topBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            dragStart = input.Position
+            startPos = main.Position
+
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+
+    topBar.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local delta = input.Position - dragStart
+            main.Position = UDim2.new(startPos.X.Scale,
+                                      startPos.X.Offset + delta.X,
+                                      startPos.Y.Scale,
+                                      startPos.Y.Offset + delta.Y)
+        end
+    end)
+end
+
+-- ========== RECORDING ==========
+local isRecording = false
+local isPlaying = false
+local recordedFrames = {}
+local recordStartTick = 0
+local sampleAcc = 0
+
+-- Store original character state
+local originalCFrame = nil
+local originalWalkSpeed = nil
+
+local function getChar()
+    local c = player.Character
+    if not c then return nil,nil,nil end
+    local hum = c:FindFirstChildOfClass("Humanoid")
+    local hrp = c:FindFirstChild("HumanoidRootPart")
+    return c, hum, hrp
+end
+
+local function saveCharacterState()
+    local c, hum, hrp = getChar()
+    if hum and hrp then
+        originalCFrame = hrp.CFrame
+        originalWalkSpeed = hum.WalkSpeed
+    end
+end
+
+local function restoreCharacterState()
+    local c, hum, hrp = getChar()
+    if hum and hrp and originalCFrame then
+        hrp.CFrame = originalCFrame
+        hum.WalkSpeed = originalWalkSpeed or DEFAULT_WALKSPEED
+        hum.Sit = false
+        hum.PlatformStand = false
+    end
+end
+
+local function getHumanoidState(hum)
+    local state = hum:GetState()
+    return {
+        state = state,
+        climbing = (state == Enum.HumanoidStateType.Climbing),
+        jumping = (state == Enum.HumanoidStateType.Jumping or state == Enum.HumanoidStateType.Freefall),
+        sitting = hum.Sit,
+        swimming = (state == Enum.HumanoidStateType.Swimming),
+    }
+end
+
+local function getVelocity(hrp)
+    if not hrp then return 0 end
+    local ok, vel = pcall(function() return hrp.AssemblyLinearVelocity end)
+    if not ok or not vel then
+        return 0
+    end
+    local horizontal = Vector3.new(vel.X, 0, vel.Z)
+    return horizontal.Magnitude
+end
+
+recBtn.MouseButton1Click:Connect(function()
+    if isRecording then showToast("Already recording") return end
+    if isPlaying then 
+        isPlaying = false
+        task.wait(0.1)
+    end
+    recordedFrames = {}
+    recordStartTick = tick()
+    sampleAcc = 0
+    isRecording = true
+    showToast("🎥 Recording started")
+end)
+
+stopBtn.MouseButton1Click:Connect(function()
+    if isRecording then
+        isRecording = false
+        showToast("⏹️ Stopped - " .. #recordedFrames .. " frames")
+    end
+    if isPlaying then
+        isPlaying = false
+        showToast("⏹️ Playback stopped")
+    end
+end)
+
+-- RECORDING LOOP
+RunService.Heartbeat:Connect(function(dt)
+    if not isRecording then return end
+    sampleAcc = sampleAcc + dt
+    if sampleAcc >= SAMPLE_INTERVAL then
+        sampleAcc = sampleAcc - SAMPLE_INTERVAL
+        local c, hum, hrp = getChar()
+        if hum and hrp then
+            local t = tick() - recordStartTick
+            local humState = getHumanoidState(hum)
+            local velocity = getVelocity(hrp)
+
+            table.insert(recordedFrames, {
+                t = t,
+                pos = hrp.Position,
+                cframe = hrp.CFrame,
+                velocity = velocity,
+                state = humState.state,
+                climbing = humState.climbing,
+                jumping = humState.jumping,
+                sitting = humState.sitting,
+                swimming = humState.swimming,
+                jump = hum.Jump,
+                sit = hum.Sit,
+            })
+            timerLabel.Text = timeFmt(t)
+        end
+    end
+end)
+
+-- ========== SAVE ==========
+saveBtn.MouseButton1Click:Connect(function()
+    if #recordedFrames == 0 then
+        showToast("No recording to save")
+        return
+    end
+    
+    local simpleData = {
+        version = 1,
+        frames = {}
+    }
+    
+    for i, frame in ipairs(recordedFrames) do
+        simpleData.frames[i] = {
+            t = frame.t,
+            x = frame.pos.X,
+            y = frame.pos.Y,
+            z = frame.pos.Z,
+            v = frame.velocity,
+            climbing = frame.climbing,
+            jumping = frame.jumping,
+            sitting = frame.sitting,
+            swimming = frame.swimming
+        }
+    end
+    
+    local success, jsonData = pcall(function()
+        return HttpService:JSONEncode(simpleData)
+    end)
+    
+    if success then
+        if safeClipboard(jsonData) then
+            showToast("✅ Saved " .. #recordedFrames .. " frames")
+        else
+            local saveFrame = Instance.new("Frame")
+            saveFrame.Size = UDim2.new(0, 400, 0, 300)
+            saveFrame.Position = UDim2.new(0.5, -200, 0.5, -150)
+            saveFrame.BackgroundColor3 = Color3.fromRGB(43, 33, 57)
+            saveFrame.Parent = screen
+            Instance.new("UICorner", saveFrame).CornerRadius = UDim.new(0, 12)
+            
+            local textBox = Instance.new("TextBox")
+            textBox.Size = UDim2.new(0.9, 0, 0.7, 0)
+            textBox.Position = UDim2.new(0.05, 0, 0.1, 0)
+            textBox.BackgroundColor3 = Color3.fromRGB(30, 20, 40)
+            textBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+            textBox.Font = Enum.Font.Code
+            textBox.TextSize = 12
+            textBox.Text = jsonData
+            textBox.MultiLine = true
+            textBox.TextWrapped = true
+            textBox.ClearTextOnFocus = false
+            textBox.Parent = saveFrame
+            Instance.new("UICorner", textBox).CornerRadius = UDim.new(0, 8)
+            
+            local closeBtn = Instance.new("TextButton")
+            closeBtn.Size = UDim2.new(0.3, 0, 0, 35)
+            closeBtn.Position = UDim2.new(0.35, 0, 0.85, 0)
+            closeBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+            closeBtn.Text = "Close"
+            closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+            closeBtn.Font = Enum.Font.GothamBold
+            closeBtn.Parent = saveFrame
+            Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 8)
+            
+            closeBtn.MouseButton1Click:Connect(function()
+                saveFrame:Destroy()
+            end)
+            
+            showToast("Copy the text manually")
+        end
+    else
+        showToast("❌ Failed to save")
+    end
+end)
+
+-- ========== LOAD ==========
+loadBtn.MouseButton1Click:Connect(function()
+    local clipboardData = readFromClipboard()
+    
+    if clipboardData and clipboardData ~= "" then
+        local success, data = pcall(function()
+            return HttpService:JSONDecode(clipboardData)
+        end)
+        
+        if success and data and data.frames and #data.frames > 0 then
+            local newFrames = {}
+            for i, frameData in ipairs(data.frames) do
+                newFrames[i] = {
+                    t = frameData.t or (i * SAMPLE_INTERVAL),
+                    pos = Vector3.new(frameData.x or 0, frameData.y or 0, frameData.z or 0),
+                    cframe = CFrame.new(frameData.x or 0, frameData.y or 0, frameData.z or 0),
+                    velocity = frameData.v or 0,
+                    state = Enum.HumanoidStateType.Running,
+                    climbing = frameData.climbing or false,
+                    jumping = frameData.jumping or false,
+                    sitting = frameData.sitting or false,
+                    swimming = frameData.swimming or false,
+                    jump = false,
+                    sit = frameData.sitting or false
+                }
+            end
+            
+            recordedFrames = newFrames
+            if recordedFrames[#recordedFrames] then
+                timerLabel.Text = timeFmt(recordedFrames[#recordedFrames].t)
+            end
+            showToast("✅ Loaded " .. #recordedFrames .. " frames")
+            return
+        end
+    end
+    
+    -- Manual paste window
+    local loadFrame = Instance.new("Frame")
+    loadFrame.Size = UDim2.new(0, 400, 0, 300)
+    loadFrame.Position = UDim2.new(0.5, -200, 0.5, -150)
+    loadFrame.BackgroundColor3 = Color3.fromRGB(43, 33, 57)
+    loadFrame.Parent = screen
+    Instance.new("UICorner", loadFrame).CornerRadius = UDim.new(0, 12)
+    
+    local textBox = Instance.new("TextBox")
+    textBox.Size = UDim2.new(0.9, 0, 0.6, 0)
+    textBox.Position = UDim2.new(0.05, 0, 0.1, 0)
+    textBox.BackgroundColor3 = Color3.fromRGB(30, 20, 40)
+    textBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+    textBox.Font = Enum.Font.Code
+    textBox.TextSize = 12
+    textBox.Text = ""
+    textBox.PlaceholderText = "Paste JSON here..."
+    textBox.MultiLine = true
+    textBox.TextWrapped = true
+    textBox.ClearTextOnFocus = false
+    textBox.Parent = loadFrame
+    Instance.new("UICorner", textBox).CornerRadius = UDim.new(0, 8)
+    
+    local loadBtn2 = Instance.new("TextButton")
+    loadBtn2.Size = UDim2.new(0.4, 0, 0, 35)
+    loadBtn2.Position = UDim2.new(0.1, 0, 0.8, 0)
+    loadBtn2.BackgroundColor3 = Color3.fromRGB(60, 180, 140)
+    loadBtn2.Text = "Load"
+    loadBtn2.TextColor3 = Color3.fromRGB(255, 255, 255)
+    loadBtn2.Font = Enum.Font.GothamBold
+    loadBtn2.Parent = loadFrame
+    Instance.new("UICorner", loadBtn2).CornerRadius = UDim.new(0, 8)
+    
+    local cancelBtn = Instance.new("TextButton")
+    cancelBtn.Size = UDim2.new(0.4, 0, 0, 35)
+    cancelBtn.Position = UDim2.new(0.5, 0, 0.8, 0)
+    cancelBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+    cancelBtn.Text = "Cancel"
+    cancelBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    cancelBtn.Font = Enum.Font.GothamBold
+    cancelBtn.Parent = loadFrame
+    Instance.new("UICorner", cancelBtn).CornerRadius = UDim.new(0, 8)
+    
+    loadBtn2.MouseButton1Click:Connect(function()
+        local input = textBox.Text
+        if input and input ~= "" then
+            local success, data = pcall(function()
+                return HttpService:JSONDecode(input)
+            end)
+            
+            if success and data and data.frames and #data.frames > 0 then
+                local newFrames = {}
+                for i, frameData in ipairs(data.frames) do
+                    newFrames[i] = {
+                        t = frameData.t or (i * SAMPLE_INTERVAL),
+                        pos = Vector3.new(frameData.x or 0, frameData.y or 0, frameData.z or 0),
+                        cframe = CFrame.new(frameData.x or 0, frameData.y or 0, frameData.z or 0),
+                        velocity = frameData.v or 0,
+                        state = Enum.HumanoidStateType.Running,
+                        climbing = frameData.climbing or false,
+                        jumping = frameData.jumping or false,
+                        sitting = frameData.sitting or false,
+                        swimming = frameData.swimming or false,
+                        jump = false,
+                        sit = frameData.sitting or false
+                    }
+                end
+                
+                recordedFrames = newFrames
+                if recordedFrames[#recordedFrames] then
+                    timerLabel.Text = timeFmt(recordedFrames[#recordedFrames].t)
+                end
+                loadFrame:Destroy()
+                showToast("✅ Loaded " .. #recordedFrames .. " frames")
+            else
+                showToast("❌ Invalid data")
+            end
+        end
+    end)
+    
+    cancelBtn.MouseButton1Click:Connect(function()
+        loadFrame:Destroy()
+    end)
+end)
+
+-- ========== PLAYBACK (FIXED ROTATION - AutoRotate ON) ==========
+local function playback(loopMode)
+    if #recordedFrames < 2 then
+        showToast("No recording")
+        return
+    end
+
+    local c, hum, hrp = getChar()
+    if not hum or not hrp then
+        showToast("Character not ready")
+        return
+    end
+
+    -- Save current state before playback
+    saveCharacterState()
+
+    -- Teleport to first recorded frame safely
+    local first = recordedFrames[1]
+    if first and first.cframe then
+        hrp.CFrame = first.cframe
+    end
+    hum.Sit = false
+    task.wait(0.05)
+
+    local originalWalkSpeed = hum.WalkSpeed
+    
+    -- PENTING: AutoRotate tetap ON agar karakter menghadap ke arah gerakan
+    -- hum.AutoRotate = false  <-- JANGAN DIMATIKAN!
+    hum.PlatformStand = true -- Tetap aktifkan PlatformStand untuk cegah jatuh
+
+    isPlaying = true
+    showToast("Playing...")
+
+    local playbackSpeed = tonumber(speedBox.Text) or 1
+    playbackSpeed = clamp(playbackSpeed, 0.05, MAX_SPEED)
+
+    local function smoothLerpFrames(fA, fB, dur)
+        dur = math.max(dur, 0.0001)
+        local startT = tick()
+        local endT = startT + dur
+        while tick() < endT and isPlaying do
+            local now = tick()
+            local a = clamp((now - startT) / dur, 0, 1)
+            local cf = fA.cframe:Lerp(fB.cframe, a)
+            hrp.CFrame = cf
+            RunService.Heartbeat:Wait()
+        end
+        if isPlaying then
+            hrp.CFrame = fB.cframe
+        end
+    end
+
+    while isPlaying do
+        for i = 1, #recordedFrames - 1 do
+            if not isPlaying then break end
+
+            local frameA = recordedFrames[i]
+            local frameB = recordedFrames[i + 1]
+            if not frameA or not frameB then break end
+
+            local rawDuration = frameB.t - frameA.t
+            local duration = (rawDuration > 0 and rawDuration or SAMPLE_INTERVAL) / playbackSpeed
+            duration = math.max(duration, 0.0001)
+
+            local vel = frameB.velocity or 0
+
+            if frameB.sitting then
+                hum.Sit = true
+                hum.WalkSpeed = 0
+                hrp.CFrame = frameB.cframe
+                task.wait(duration)
+
+            elseif frameB.climbing then
+                hum.Sit = false
+                pcall(function() hum:ChangeState(Enum.HumanoidStateType.Climbing) end)
+                hum.WalkSpeed = math.max(8, vel * playbackSpeed)
+                smoothLerpFrames(frameA, frameB, duration)
+
+            elseif frameB.jumping then
+                hum.Sit = false
+                pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
+                hum.Jump = true
+                hum.WalkSpeed = math.max(8, vel * playbackSpeed)
+                smoothLerpFrames(frameA, frameB, duration)
+
+            elseif frameB.swimming then
+                hum.Sit = false
+                pcall(function() hum:ChangeState(Enum.HumanoidStateType.Swimming) end)
+                hum.WalkSpeed = math.max(8, vel * playbackSpeed)
+                smoothLerpFrames(frameA, frameB, duration)
+
+            else
+                hum.Sit = false
+
+                if vel < 0.3 then
+                    hum.WalkSpeed = 0
+                    hrp.CFrame = frameB.cframe
+                    task.wait(duration)
+                else
+                    if vel < 8 then
+                        hum.WalkSpeed = math.max(6, vel * playbackSpeed * 0.9)
+                        pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
+                    else
+                        hum.WalkSpeed = math.max(14, vel * playbackSpeed * 1.1)
+                        pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
+                    end
+
+                    smoothLerpFrames(frameA, frameB, duration)
+                end
+            end
+        end
+
+        if not loopMode then break end
+
+        if loopMode and isPlaying then
+            if recordedFrames[1] and recordedFrames[1].cframe then
+                hrp.CFrame = recordedFrames[1].cframe
+            end
+            task.wait(0.1)
+        end
+    end
+
+    -- Restore character state
+    isPlaying = false
+    restoreCharacterState()
+    hum.WalkSpeed = originalWalkSpeed or DEFAULT_WALKSPEED
+    hum.Sit = false
+    hum.PlatformStand = false
+    -- AutoRotate sudah dalam keadaan true dari awal, tidak perlu diubah
+    showToast("Playback finished - Character restored")
+end
+
+playBtn.MouseButton1Click:Connect(function()
+    if isPlaying then
+        isPlaying = false
+        showToast("Stopping...")
+        return
+    end
+    task.spawn(function() playback(isLoopMode) end)
+end)
+
+-- Speed sanitize
+speedBox.FocusLost:Connect(function()
+    local v = tonumber(speedBox.Text)
+    if not v then v = 1 end
+    v = clamp(v, 0.05, MAX_SPEED)
+    if math.floor(v) == v then
+        speedBox.Text = tostring(math.floor(v))
+    else
+        speedBox.Text = tostring(v)
+    end
+end)
+
+-- Hotkeys
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.KeyCode == Enum.KeyCode.R then recBtn:Activate() end
+    if input.KeyCode == Enum.KeyCode.T then stopBtn:Activate() end
+    if input.KeyCode == Enum.KeyCode.P then playBtn:Activate() end
+end)
+
+-- Character respawn handling
+player.CharacterAdded:Connect(function()
+    isPlaying = false
+    isRecording = false
+    showToast("Character respawned")
+end)
+
+print("[WISE Replay v14] Loaded successfully - Fixed Rotation (AutoRotate ON)")
