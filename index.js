@@ -108,6 +108,37 @@
       flex: 1 1 45%;
     }
 
+    /* Style untuk input dengan prefix */
+    .input-with-prefix {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .prefix-badge {
+      background: linear-gradient(135deg, #1a3a5c, #0f2840);
+      border: 1px solid #3f6eb0;
+      color: #7bb3ff;
+      padding: 14px 16px;
+      border-radius: 18px 0 0 18px;
+      font-weight: 700;
+      font-size: 0.95rem;
+      letter-spacing: 0.5px;
+      white-space: nowrap;
+      user-select: none;
+      font-family: 'Segoe UI', monospace;
+    }
+
+    .input-with-prefix input {
+      border-radius: 0 18px 18px 0;
+      border-left: none;
+      flex: 1;
+    }
+
+    .input-with-prefix input:focus {
+      border-left: none;
+    }
+
     .convert-btn {
       background: #1e3b6b;
       border: none;
@@ -137,6 +168,10 @@
       transform: scale(1.01);
     }
 
+    .convert-btn:active {
+      transform: scale(0.98);
+    }
+
     .result-box {
       background: #0a0e13;
       border-radius: 22px;
@@ -155,6 +190,7 @@
       color: #9ac8ff;
       margin: 12px 0;
       border: 1px solid #2d4b6e;
+      word-break: break-all;
     }
 
     .preview-card {
@@ -174,6 +210,7 @@
       display: flex;
       gap: 10px;
       margin: 15px 0 5px;
+      flex-wrap: wrap;
     }
 
     .copy-btn {
@@ -191,11 +228,16 @@
       align-items: center;
       justify-content: center;
       gap: 5px;
+      min-width: 140px;
     }
 
     .copy-btn:hover {
       background: #233752;
       border-color: #608fd0;
+    }
+
+    .copy-btn:active {
+      transform: scale(0.96);
     }
 
     .note {
@@ -227,6 +269,32 @@
       border-color: #2f4a6b;
       color: #c0d4f0;
     }
+
+    .map-preview {
+      font-size: 0.8rem;
+      color: #8ab4f0;
+      margin-top: 6px;
+      padding-left: 4px;
+    }
+
+    .map-preview strong {
+      color: #b8d6ff;
+    }
+
+    @media (max-width: 500px) {
+      .glass-card {
+        padding: 20px 15px;
+      }
+      
+      .prefix-badge {
+        font-size: 0.8rem;
+        padding: 14px 10px;
+      }
+      
+      .copy-group {
+        flex-direction: column;
+      }
+    }
   </style>
 </head>
 <body>
@@ -253,8 +321,14 @@
 
     <div class="row">
       <div class="input-group">
-        <label>🏔️ Nama Map</label>
-        <input type="text" id="mapInput" placeholder="MOUNT NOX" value="MOUNT NOX">
+        <label>🏔️ Nama Gunung <span class="auto-badge">MOUNT + NAMA</span></label>
+        <div class="input-with-prefix">
+          <span class="prefix-badge">MOUNT</span>
+          <input type="text" id="mapInput" placeholder="NOX" value="NOX" autocomplete="off">
+        </div>
+        <div class="map-preview">
+          📌 Hasil: <strong>MOUNT <span id="mapPreviewText">NOX</span></strong>
+        </div>
       </div>
       <div class="input-group">
         <label>🔗 Link LUA <span class="auto-badge">AUTO PERMANEN</span></label>
@@ -291,14 +365,16 @@
 
   <script>
     (function() {
-      // === KONFIGURASI LINK LUA PERMANEN ===
+      // === KONFIGURASI ===
       const PERMANENT_LUA_LINK = "https://discord.com/channels/1483313050185371772/1490578645516025986";
+      const MOUNT_PREFIX = "MOUNT";
       
       // DOM elements
       const driveLinkInput = document.getElementById('driveLinkInput');
       const creatorInput = document.getElementById('creatorInput');
       const dateInput = document.getElementById('dateInput');
       const mapInput = document.getElementById('mapInput');
+      const mapPreviewText = document.getElementById('mapPreviewText');
       const luaLinkInput = document.getElementById('luaLinkInput');
       const notesInput = document.getElementById('notesInput');
       const generateBtn = document.getElementById('generateBtn');
@@ -325,23 +401,43 @@
         return `${dayName}, ${day} ${month} ${year}`;
       }
 
-      // Set tanggal otomatis saat halaman dimuat
       function setAutoDate() {
         dateInput.value = getCurrentFormattedDate();
       }
 
-      // Set link LUA permanen
       function setPermanentLuaLink() {
         luaLinkInput.value = PERMANENT_LUA_LINK;
       }
 
-      // Update tanggal setiap menit (jika halaman dibuka lama)
       function startAutoDateUpdater() {
         setAutoDate();
-        // Update setiap 60 detik
         setInterval(() => {
           dateInput.value = getCurrentFormattedDate();
         }, 60000);
+      }
+
+      // === FUNGSI NAMA MAP DENGAN PREFIX MOUNT ===
+      function getFullMapName() {
+        const rawName = mapInput.value.trim();
+        if (!rawName) return "MOUNT NOX"; // default fallback
+        
+        // Ubah ke uppercase untuk konsistensi
+        const upperName = rawName.toUpperCase();
+        
+        // Jika user sudah mengetik "MOUNT", jangan duplikasi
+        if (upperName.startsWith("MOUNT ")) {
+          return upperName;
+        }
+        if (upperName === "MOUNT") {
+          return "MOUNT";
+        }
+        
+        return `${MOUNT_PREFIX} ${upperName}`;
+      }
+
+      function updateMapPreview() {
+        const fullName = getFullMapName();
+        mapPreviewText.textContent = fullName.replace("MOUNT ", "").replace("MOUNT", "");
       }
 
       // === EKSTRAK FILE ID ===
@@ -376,10 +472,10 @@
         return `https://drive.google.com/uc?export=download&id=${fileId}`;
       }
 
-      function buildFullFormat(directLink, creator, date, map, luaLink, notes) {
+      function buildFullFormat(directLink, creator, date, fullMapName, luaLink, notes) {
         const safeCreator = creator || '<@1159798036713713686>';
         const safeDate = date || getCurrentFormattedDate();
-        const safeMap = map || 'MOUNT NOX';
+        const safeMap = fullMapName || 'MOUNT NOX';
         const safeLua = luaLink || PERMANENT_LUA_LINK;
         const safeNotes = notes || 'GUNAKAN AVA BESAR YAA KALOK AVA KECIL TERBANG NANTI';
         
@@ -407,80 +503,163 @@ PASTE IN LINK LOAD
         directLinkDisplay.textContent = directLink;
         previewOutput.textContent = fullText;
         resultSection.style.display = 'block';
+        // Smooth scroll ke hasil
+        resultSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
 
       function handleGenerate() {
         const rawLink = driveLinkInput.value.trim();
         if (!rawLink) {
-          alert('Mohon masukkan link Google Drive terlebih dahulu.');
+          alert('⚠️ Mohon masukkan link Google Drive terlebih dahulu.');
+          driveLinkInput.focus();
           return;
         }
 
         const fileId = extractFileId(rawLink);
         if (!fileId) {
-          alert('Gagal mengekstrak ID file. Pastikan link Google Drive valid (contoh mengandung /d/FILE_ID).');
+          alert('❌ Gagal mengekstrak ID file. Pastikan link Google Drive valid (contoh mengandung /d/FILE_ID).');
+          driveLinkInput.focus();
           return;
         }
 
         const directLink = buildDirectLink(fileId);
+        const fullMapName = getFullMapName();
         
-        // Ambil nilai dari input (tanggal dan lua link sudah auto)
         const creator = creatorInput.value.trim();
         const date = dateInput.value.trim();
-        const map = mapInput.value.trim();
         const luaLink = luaLinkInput.value.trim();
         const notes = notesInput.value.trim();
 
-        const fullFormat = buildFullFormat(directLink, creator, date, map, luaLink, notes);
+        const fullFormat = buildFullFormat(directLink, creator, date, fullMapName, luaLink, notes);
         displayResult(directLink, fullFormat);
       }
 
-      async function copyToClipboard(text, successMessage = 'Berhasil disalin!') {
+      // === FUNGSI COPY ===
+      async function copyToClipboard(text, successMessage = '✅ Berhasil disalin!') {
         try {
           await navigator.clipboard.writeText(text);
-          alert(successMessage);
+          // Notifikasi singkat tanpa alert (lebih modern)
+          showToast(successMessage);
         } catch (err) {
+          // Fallback untuk browser lama
           const textarea = document.createElement('textarea');
           textarea.value = text;
+          textarea.style.position = 'fixed';
+          textarea.style.opacity = '0';
           document.body.appendChild(textarea);
           textarea.select();
-          document.execCommand('copy');
+          try {
+            document.execCommand('copy');
+            showToast(successMessage);
+          } catch (e) {
+            alert('Gagal menyalin. Silakan coba lagi.');
+          }
           document.body.removeChild(textarea);
-          alert(successMessage);
         }
       }
 
+      // Toast notification sederhana
+      function showToast(message) {
+        const existingToast = document.querySelector('.custom-toast');
+        if (existingToast) existingToast.remove();
+        
+        const toast = document.createElement('div');
+        toast.className = 'custom-toast';
+        toast.textContent = message;
+        toast.style.cssText = `
+          position: fixed;
+          bottom: 30px;
+          left: 50%;
+          transform: translateX(-50%);
+          background: #1a3a5c;
+          color: #b8d6ff;
+          padding: 12px 28px;
+          border-radius: 30px;
+          font-weight: 600;
+          font-size: 0.95rem;
+          z-index: 9999;
+          border: 1px solid #3f6eb0;
+          box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+          animation: fadeInUp 0.3s ease, fadeOut 0.3s ease 1.7s forwards;
+          font-family: 'Segoe UI', sans-serif;
+        `;
+        
+        // Tambahkan style animasi jika belum ada
+        if (!document.getElementById('toast-styles')) {
+          const style = document.createElement('style');
+          style.id = 'toast-styles';
+          style.textContent = `
+            @keyframes fadeInUp {
+              from { opacity: 0; transform: translateX(-50%) translateY(20px); }
+              to { opacity: 1; transform: translateX(-50%) translateY(0); }
+            }
+            @keyframes fadeOut {
+              from { opacity: 1; }
+              to { opacity: 0; }
+            }
+          `;
+          document.head.appendChild(style);
+        }
+        
+        document.body.appendChild(toast);
+        setTimeout(() => {
+          if (toast.parentNode) toast.remove();
+        }, 2200);
+      }
+
       // === EVENT LISTENERS ===
+      
+      // Update preview map saat user mengetik
+      mapInput.addEventListener('input', updateMapPreview);
+      
+      // Generate
       generateBtn.addEventListener('click', handleGenerate);
+      
+      // Enter key pada link input untuk generate
+      driveLinkInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          handleGenerate();
+        }
+      });
+      
+      // Enter key pada map input untuk generate juga
+      mapInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          handleGenerate();
+        }
+      });
 
       copyLinkBtn.addEventListener('click', () => {
         const link = directLinkDisplay.textContent;
         if (link && link.startsWith('https://')) {
-          copyToClipboard(link, 'Link download berhasil disalin!');
+          copyToClipboard(link, '✅ Link download berhasil disalin!');
         } else {
-          alert('Link belum tersedia. Generate dulu.');
+          alert('⚠️ Link belum tersedia. Silakan generate terlebih dahulu.');
         }
       });
 
       copyFullFormatBtn.addEventListener('click', () => {
         const fullText = previewOutput.textContent;
         if (fullText && fullText.includes('FILE RECORD')) {
-          copyToClipboard(fullText, 'Format lengkap berhasil disalin!');
+          copyToClipboard(fullText, '✅ Format lengkap berhasil disalin!');
         } else {
-          alert('Format belum tersedia. Silakan generate.');
+          alert('⚠️ Format belum tersedia. Silakan generate terlebih dahulu.');
         }
       });
 
       // === INISIALISASI ===
       driveLinkInput.placeholder = 'https://drive.google.com/file/d/1SL1uOUUhWDjKGNzuxEOGqMad9OLpa0Up/view?usp=sharing';
       
-      // Set nilai awal
       setPermanentLuaLink();
       startAutoDateUpdater();
+      updateMapPreview();
       
-      // Tambahkan info readonly
+      // Tooltips
       dateInput.title = "Tanggal terisi otomatis berdasarkan waktu sistem Anda";
       luaLinkInput.title = "Link LUA permanen, tidak dapat diubah";
+      mapInput.title = "Masukkan nama gunung saja, awalan MOUNT akan otomatis ditambahkan";
       
     })();
   </script>
